@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -64,6 +65,7 @@ type ServerModel struct {
 	errorMessage    string
 	vaultToken      string
 	vaultTokenInput string
+	pasteError      string
 }
 
 // Init initializes the model
@@ -86,9 +88,12 @@ func (m ServerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch m.state {
 		case StateVaultTokenInput:
+			m.pasteError = "" // Clear any paste error on keypress
+
 			switch msg.String() {
 			case "ctrl+c", "q":
 				return m, tea.Quit
+
 			case "enter":
 				if m.vaultTokenInput != "" {
 					// Set the environment variable
@@ -97,10 +102,20 @@ func (m ServerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.state = StateServerSelection
 					return m, nil
 				}
+
+			case "ctrl+v": // Handle paste
+				text, err := clipboard.ReadAll()
+				if err != nil {
+					m.pasteError = fmt.Sprintf("Failed to paste: %v", err)
+				} else {
+					m.vaultTokenInput += text
+				}
+
 			case "backspace":
 				if len(m.vaultTokenInput) > 0 {
 					m.vaultTokenInput = m.vaultTokenInput[:len(m.vaultTokenInput)-1]
 				}
+
 			default:
 				// Add character to input (except for control keys)
 				if len(msg.String()) == 1 {
@@ -181,6 +196,14 @@ func (m ServerModel) View() string {
 		maskedInput := strings.Repeat("*", len(m.vaultTokenInput))
 		s += inputStyle.Render("> " + maskedInput)
 
+		// Add paste instructions and error (if any)
+		s += "\n\n"
+		s += infoStyle.Render("Type or press Ctrl+V to paste your token, then press Enter")
+
+		if m.pasteError != "" {
+			s += "\n" + errorStyle.Render(m.pasteError)
+		}
+
 		return s
 
 	case StateServerSelection:
@@ -226,7 +249,7 @@ func (m ServerModel) View() string {
 		}
 
 		s += "\n\n"
-		s += infoStyle.Render("Press 'b' to go back to server selection, 'q' to quit")
+		s += infoStyle.Render("Press 'b' to go back to server selection, q to quit")
 		return s
 	}
 

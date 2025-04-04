@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/atotto/clipboard"
@@ -28,11 +29,18 @@ var (
 	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#FF0000"))
 	promptStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#4CAF50"))
 	inputStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("#2196F3"))
+	categoryStyle     = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FF9800"))
 )
 
 // Config represents our application configuration
 type Config struct {
-	Servers map[string]ServerConfig `yaml:"servers"`
+	Categories map[string]CategoryConfig `yaml:"categories"`
+}
+
+// CategoryConfig represents a category (logging or metrics)
+type CategoryConfig struct {
+	Description string                  `yaml:"description,omitempty"`
+	Servers     map[string]ServerConfig `yaml:"servers"`
 }
 
 // ServerConfig holds configuration for each server
@@ -49,23 +57,27 @@ type AppState int
 
 const (
 	StateVaultTokenInput AppState = iota
+	StateCategorySelection
 	StateServerSelection
 	StateScriptOutput
 )
 
 // ServerModel represents the state of our application
 type ServerModel struct {
-	config          Config
-	serverNames     []string
-	cursor          int
-	selected        string
-	state           AppState
-	runOutput       string
-	hasError        bool
-	errorMessage    string
-	vaultToken      string
-	vaultTokenInput string
-	pasteError      string
+	config           Config
+	categoryNames    []string
+	serverNames      []string
+	categoryCursor   int
+	serverCursor     int
+	selectedCategory string
+	selectedServer   string
+	state            AppState
+	runOutput        string
+	hasError         bool
+	errorMessage     string
+	vaultToken       string
+	vaultTokenInput  string
+	pasteError       string
 }
 
 // Init initializes the model
@@ -110,7 +122,7 @@ func (m ServerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					// Set the environment variable
 					os.Setenv("VAULT_TOKEN", m.vaultTokenInput)
 					m.vaultToken = m.vaultTokenInput
-					m.state = StateServerSelection
+					m.state = StateCategorySelection
 					return m, nil
 				}
 
@@ -134,30 +146,65 @@ func (m ServerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
+		case StateCategorySelection:
+			switch msg.String() {
+			case "ctrl+c", "q":
+				return m, tea.Quit
+			case "up", "k":
+				if m.categoryCursor > 0 {
+					m.categoryCursor--
+				}
+			case "down", "j":
+				if m.categoryCursor < len(m.categoryNames)-1 {
+					m.categoryCursor++
+				}
+			case "enter":
+				m.selectedCategory = m.categoryNames[m.categoryCursor]
+
+				// Update server names based on selected category
+				var serverNames []string
+				for name := range m.config.Categories[m.selectedCategory].Servers {
+					serverNames = append(serverNames, name)
+				}
+				sort.Strings(serverNames)
+				m.serverNames = serverNames
+				m.serverCursor = 0 // Reset server cursor
+
+				m.state = StateServerSelection
+			}
+
 		case StateServerSelection:
 			switch msg.String() {
 			case "ctrl+c", "q":
 				return m, tea.Quit
 			case "up", "k":
-				if m.cursor > 0 {
-					m.cursor--
+				if m.serverCursor > 0 {
+					m.serverCursor--
 				}
 			case "down", "j":
-				if m.cursor < len(m.serverNames)-1 {
-					m.cursor++
+				if m.serverCursor < len(m.serverNames)-1 {
+					m.serverCursor++
 				}
 			case "enter":
-				m.selected = m.serverNames[m.cursor]
+				m.selectedServer = m.serverNames[m.serverCursor]
 				m.state = StateScriptOutput
-				return m, runServerScript(m.selected, m.config.Servers[m.selected], m.vaultToken)
+
+				// Get the server config from the selected category
+				serverConfig := m.config.Categories[m.selectedCategory].Servers[m.selectedServer]
+				return m, runServerScript(m.selectedServer, serverConfig, m.vaultToken)
+
+			case "b", "backspace", "esc":
+				// Go back to category selection
+				m.state = StateCategorySelection
+				return m, nil
 			}
 
 		case StateScriptOutput:
 			switch msg.String() {
 			case "ctrl+c", "q":
 				return m, tea.Quit
-			case "b":
-				// Go back to selection
+			case "b", "backspace", "esc":
+				// Go back to server selection
 				m.state = StateServerSelection
 				m.runOutput = ""
 				m.hasError = false
@@ -167,7 +214,7 @@ func (m ServerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case vaultTokenMsg:
 		m.vaultToken = string(msg)
-		m.state = StateServerSelection
+		m.state = StateCategorySelection
 		return m, nil
 
 	case vaultTokenMissingMsg:
@@ -217,26 +264,26 @@ func (m ServerModel) View() string {
 
 		return s
 
-	case StateServerSelection:
-		// Selection view
-		s := titleStyle.Render("Server Selection") + "\n\n"
-		s += "Select a server region to run script:\n\n"
+	case StateCategorySelection:
+		// Category selection view
+		s := titleStyle.Render("Category Selection") + "\n\n"
+		s += "Select a category:\n\n"
 
-		for i, serverName := range m.serverNames {
+		for i, categoryName := range m.categoryNames {
 			cursor := " "
-			if m.cursor == i {
+			if m.categoryCursor == i {
 				cursor = ">"
 			}
 
-			serverInfo := serverName
-			if desc := m.config.Servers[serverName].Description; desc != "" {
-				serverInfo = fmt.Sprintf("%s - %s", serverName, desc)
+			categoryInfo := categoryName
+			if desc := m.config.Categories[categoryName].Description; desc != "" {
+				categoryInfo = fmt.Sprintf("%s - %s", categoryName, desc)
 			}
 
-			if m.cursor == i {
-				s += selectedItemStyle.Render(fmt.Sprintf("%s %s", cursor, serverInfo)) + "\n"
+			if m.categoryCursor == i {
+				s += selectedItemStyle.Render(fmt.Sprintf("%s %s", cursor, categoryInfo)) + "\n"
 			} else {
-				s += itemStyle.Render(fmt.Sprintf("%s %s", cursor, serverInfo)) + "\n"
+				s += itemStyle.Render(fmt.Sprintf("%s %s", cursor, categoryInfo)) + "\n"
 			}
 		}
 
@@ -244,10 +291,39 @@ func (m ServerModel) View() string {
 		s += infoStyle.Render("Use arrow keys or j/k to navigate, enter to select, q to quit")
 		return s
 
+	case StateServerSelection:
+		// Server selection view
+		s := titleStyle.Render("Server Selection") + "\n\n"
+		s += categoryStyle.Render(fmt.Sprintf("Category: %s", m.selectedCategory)) + "\n\n"
+		s += "Select a server region to run script:\n\n"
+
+		for i, serverName := range m.serverNames {
+			cursor := " "
+			if m.serverCursor == i {
+				cursor = ">"
+			}
+
+			serverInfo := serverName
+			if desc := m.config.Categories[m.selectedCategory].Servers[serverName].Description; desc != "" {
+				serverInfo = fmt.Sprintf("%s - %s", serverName, desc)
+			}
+
+			if m.serverCursor == i {
+				s += selectedItemStyle.Render(fmt.Sprintf("%s %s", cursor, serverInfo)) + "\n"
+			} else {
+				s += itemStyle.Render(fmt.Sprintf("%s %s", cursor, serverInfo)) + "\n"
+			}
+		}
+
+		s += "\n"
+		s += infoStyle.Render("Use arrow keys or j/k to navigate, enter to select, b to go back, q to quit")
+		return s
+
 	case StateScriptOutput:
 		// Result view
 		s := titleStyle.Render("Script Output") + "\n\n"
-		s += fmt.Sprintf("Running script for region: %s\n\n", m.selected)
+		s += categoryStyle.Render(fmt.Sprintf("Category: %s", m.selectedCategory)) + "\n"
+		s += fmt.Sprintf("Server: %s\n\n", m.selectedServer)
 
 		if m.runOutput != "" {
 			if m.hasError {
@@ -363,21 +439,26 @@ func initialSetup() (ServerModel, tea.Cmd) {
 		return ServerModel{errorMessage: err.Error()}, nil
 	}
 
-	// Extract server names
-	var serverNames []string
-	for name := range config.Servers {
-		serverNames = append(serverNames, name)
+	// Extract category names
+	var categoryNames []string
+	for name := range config.Categories {
+		categoryNames = append(categoryNames, name)
 	}
 
-	if len(serverNames) == 0 {
-		return ServerModel{errorMessage: "No servers defined in configuration"}, nil
+	if len(categoryNames) == 0 {
+		return ServerModel{errorMessage: "No categories defined in configuration"}, nil
 	}
+
+	// Sort categories alphabetically for consistent display
+	sort.Strings(categoryNames)
 
 	return ServerModel{
 		config:          config,
-		serverNames:     serverNames,
+		categoryNames:   categoryNames,
 		state:           StateVaultTokenInput, // Start in token input state
 		vaultTokenInput: "",
+		categoryCursor:  0,
+		serverCursor:    0,
 	}, nil
 }
 

@@ -1,0 +1,16 @@
+servers:
+  us-east-1:
+    script: export ENDPOINT=us-east-endpoint.example.com; export REGION=us-east-1; export ENV=prod; echo 'Connecting to US East...'; sleep 1; echo 'Connected!'; echo 'Environment: '$ENV; echo 'Endpoint: '$ENDPOINT
+    description: US East Production
+    
+  eu-central-1:
+    script: export ENDPOINT=eu-central-endpoint.example.com; export REGION=eu-central-1; export ENV=prod; echo 'Connecting to EU Central...'; sleep 1; echo 'Connected!'; echo 'Environment: '$ENV; echo 'Endpoint: '$ENDPOINT
+    description: EU Central Production
+    
+  ap-southeast-2:
+    script: export ENDPOINT=ap-southeast-endpoint.example.com; export REGION=ap-southeast-2; export ENV=prod; echo 'Connecting to Asia Pacific Sydney...'; sleep 1; echo 'Connected!'; echo 'Environment: '$ENV; echo 'Endpoint: '$ENDPOINT
+    description: Asia Pacific Sydney
+    
+  ap-south-1:
+    script: export ENDPOINT=ap-south-endpoint.example.com; export REGION=ap-south-1; export ENV=prod; echo 'Connecting to Asia Pacific Mumbai...'; sleep 1; echo 'Connected!'; echo 'Environment: '$ENV; echo 'Endpoint: '$ENDPOINT
+    description: Asia Pacific Mumbai

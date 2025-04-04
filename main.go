@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -12,6 +11,7 @@ import (
 	"github.com/atotto/clipboard"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"gopkg.in/yaml.v3"
 )
 
 // Define some basic styles
@@ -32,16 +32,16 @@ var (
 
 // Config represents our application configuration
 type Config struct {
-	Servers map[string]ServerConfig `json:"servers"`
+	Servers map[string]ServerConfig `yaml:"servers"`
 }
 
 // ServerConfig holds configuration for each server
 type ServerConfig struct {
-	Script      string            `json:"script,omitempty"`      // Direct script command to run
-	ScriptPath  string            `json:"script_path,omitempty"` // For backward compatibility
-	ScriptArgs  []string          `json:"script_args,omitempty"` // For backward compatibility
-	EnvVars     map[string]string `json:"env_vars,omitempty"`    // Still useful for both script types
-	Description string            `json:"description,omitempty"`
+	Script      string            `yaml:"script,omitempty"`      // Direct script command to run
+	ScriptPath  string            `yaml:"script_path,omitempty"` // For backward compatibility
+	ScriptArgs  []string          `yaml:"script_args,omitempty"` // For backward compatibility
+	EnvVars     map[string]string `yaml:"env_vars,omitempty"`    // Still useful for both script types
+	Description string            `yaml:"description,omitempty"`
 }
 
 // AppState represents the different states our app can be in
@@ -82,6 +82,17 @@ func checkVaultToken() tea.Msg {
 	return vaultTokenMissingMsg{}
 }
 
+// Attempt to paste from clipboard
+func pasteFromClipboard(model ServerModel) (ServerModel, error) {
+	text, err := clipboard.ReadAll()
+	if err != nil {
+		model.pasteError = fmt.Sprintf("Failed to paste: %v", err)
+		return model, err
+	}
+	model.vaultTokenInput += text
+	return model, nil
+}
+
 // Update handles all the updates to the model
 func (m ServerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -103,12 +114,12 @@ func (m ServerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 
-			case "ctrl+v": // Handle paste
-				text, err := clipboard.ReadAll()
+			case "ctrl+v", "cmd+v": // Handle paste for both Windows/Linux and macOS
+				var err error
+				m, err = pasteFromClipboard(m)
 				if err != nil {
-					m.pasteError = fmt.Sprintf("Failed to paste: %v", err)
-				} else {
-					m.vaultTokenInput += text
+					// Error is already set in the model
+					return m, nil
 				}
 
 			case "backspace":
@@ -196,9 +207,9 @@ func (m ServerModel) View() string {
 		maskedInput := strings.Repeat("*", len(m.vaultTokenInput))
 		s += inputStyle.Render("> " + maskedInput)
 
-		// Add paste instructions and error (if any)
+		// Add paste instructions with OS-aware shortcuts
 		s += "\n\n"
-		s += infoStyle.Render("Type or press Ctrl+V to paste your token, then press Enter")
+		s += infoStyle.Render("Type or paste (⌘V on macOS, Ctrl+V on Windows/Linux) your token, then press Enter")
 
 		if m.pasteError != "" {
 			s += "\n" + errorStyle.Render(m.pasteError)
@@ -272,9 +283,9 @@ func LoadConfig(path string) (Config, error) {
 		return config, fmt.Errorf("could not read config file: %v", err)
 	}
 
-	err = json.Unmarshal(data, &config)
+	err = yaml.Unmarshal(data, &config)
 	if err != nil {
-		return config, fmt.Errorf("could not parse config file: %v", err)
+		return config, fmt.Errorf("could not parse YAML config file: %v", err)
 	}
 
 	return config, nil
@@ -334,9 +345,9 @@ func runServerScript(server string, config ServerConfig, vaultToken string) tea.
 func getDefaultConfigPath() string {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return "./server-cli-config.json"
+		return "./server-cli-config.yaml"
 	}
-	return filepath.Join(homeDir, ".config", "server-cli", "config.json")
+	return filepath.Join(homeDir, ".config", "server-cli", "config.yaml")
 }
 
 // Initial checks and config loading
